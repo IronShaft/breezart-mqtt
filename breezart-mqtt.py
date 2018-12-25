@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Warning! VAV not supported!
 
@@ -11,9 +11,8 @@ Roadmap:
 1. Add VAV support
 2. Add sensors stat reading
 3. Add scenes parameters reading
-4. Add scene block support
-5. Add vent datetime sync
-6. Testing and fix bugs :)
+4. Add vent datetime sync
+5. Testing and fix bugs :)
 '''
 
 import sys
@@ -55,6 +54,8 @@ is_cooler = False
 is_auto = False
 is_vav = False
 is_regpressvav = False
+is_sceneblock = False
+is_powerblock = False
 
 timer = None
 s = None
@@ -83,6 +84,9 @@ def on_power_message(client, userdata, message):
     Описание переменных X = 11 – Включить питание, X = 10 – Отключить питание.
     Код ответа при корректном запросе ОК_VWPwr_X , где X – переданное значение (10 или 11)
     '''
+    if is_powerblock:
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t change power state, power is blocked')
+        return
     if message.payload.decode('utf-8').upper() not in ('ON', 'OFF'):
         syslog.syslog(syslog.LOG_ERR, 'Value for power (ON/OFF) incorrect: {0}'.format(message.payload.decode('utf-8')))
         return
@@ -265,6 +269,9 @@ def on_scene_message(client, userdata, message):
             Bit 7-4 – 10 - отключить выполнение сценариев по таймерам; 11 – включить выполнение сценариев
             по таймерам. При других значениях это поле ни на что не влияет.
     '''
+    if is_sceneblock:
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene, scene is blocked')
+        return
     mode = message.payload.decode('utf-8').upper()
     if mode in ('ON', 'OFF'):
         command = (10 if mode == 'OFF' else 11) << 4
@@ -374,6 +381,7 @@ def check_vent_params():
 def get_vent_status():
     global timer
     global s
+    global is_sceneblock, is_powerblock
     timer = threading.Timer(INTERVAL, get_vent_status)
     timer.start()
 
@@ -424,15 +432,16 @@ def get_vent_status():
     status['State']['Overheat'] = 'ON' if int(data_array[1], 16) & 0x08 else 'OFF'
     status['State']['AutoOff'] = 'ON' if int(data_array[1], 16) & 0x10 else 'OFF'
     status['State']['ChangeFilter'] = 'ON' if int(data_array[1], 16) & 0x20 else 'OFF'
-    modeset = {1:'Обогрев', 2:'Охлаждение', 3:'Авто', 4:'Вентиляция'}
-    status['Settings']['Mode'] = modeset[(int(data_array[1], 16) & 0x1C0) >> 6]
+    status['Settings']['Mode'] = (int(data_array[1], 16) & 0x1C0) >> 6
     status['Humidity']['Mode'] = 'ON' if int(data_array[1], 16) & 0x200 else 'OFF'
     status['Speed']['SpeedIsDown'] = 'ON' if int(data_array[1], 16) & 0x400 else 'OFF'
     status['State']['AutoRestart'] = 'ON' if int(data_array[1], 16) & 0x800 else 'OFF'
     status['State']['Comfort'] = 'ON' if int(data_array[1], 16) & 0x1000 else 'OFF'
     status['Humidity']['Auto'] = 'ON' if int(data_array[1], 16) & 0x2000 else 'OFF'
-    status['Scene']['Block'] = 'ON' if int(data_array[1], 16) & 0x4000 else 'OFF'
-    status['State']['PowerBlock'] = 'ON' if int(data_array[1], 16) & 0x8000 else 'OFF'
+    is_sceneblock = True if int(data_array[1], 16) & 0x4000 else False
+    status['Scene']['Block'] = 'ON' if is_sceneblock else 'OFF'
+    is_powerblock = True if int(data_array[1], 16) & 0x8000 else False
+    status['State']['PowerBlock'] = 'ON' if is_powerblock else 'OFF'
     '''
     bitMode:
         Bit 1, 0 – UnitState – состояние установки:
@@ -501,7 +510,10 @@ def get_vent_status():
             2 – Включено (зеленый)
         Bit 15-8 – FilterDust – загрязненность фильтра 0 - 250%, если не определено, то 255.
     '''
-    # TODO
+    status['Temperature']['Minimum'] = (int(data_array[6], 16) & 0x0F)
+    status['State']['ColorMsg'] = (int(data_array[6], 16) & 0x30) >> 4
+    status['State']['ColorInd'] = (int(data_array[6], 16) & 0xC0) >> 6
+    status['State']['FilterDust'] = (int(data_array[6], 16) & 0xFF00) >> 8
     '''
     bitTime:
         Bit 7-0 – nn – минуты (от 00 до 59)
