@@ -240,10 +240,13 @@ def on_mode_message(client, userdata, message):
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for vent mode: {0}'.format(message.payload.decode('utf-8')))
         return
     if mode == 2 and not is_cooler:
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode, cooler is not found')
         return
     if mode == 3 and not is_auto:
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode, auto mode is disabled')
         return
     if mode not in (1, 2, 3, 4):
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode, mode is unknown')
         return
     global s
     global timer
@@ -284,6 +287,7 @@ def on_scene_message(client, userdata, message):
         if mode in (1,2,3,4,5,6,7,8):
             command = mode
         else:
+            syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene, scene number must be in range 1-8')
             return
     global s
     global timer
