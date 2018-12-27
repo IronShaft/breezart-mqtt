@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # Warning! VAV not supported!
 
@@ -17,16 +17,14 @@ Roadmap:
 
 import sys
 import daemon
-import errno
 import json
-import os
 import socket
 import syslog
 import time
 import threading
 import paho.mqtt.client as mqtt
 
-# define the TCP conection to the vent
+# define the TCP connection to the vent
 TCP_IP = '192.168.X.X'
 TCP_PORT = 1560
 # password for vent
@@ -38,7 +36,7 @@ INTERVAL = 60
 # define the MQTT connection for communication with openHAB
 BROKER = '127.0.0.1'
 USERNAME = 'mqtt'
-PASSWORD='password'
+PASSWORD = 'password'
 # prefix of MQTT topics
 PREFIX = 'breezart/vent'
 # string or None for auto generate
@@ -60,9 +58,11 @@ is_sceneblock = False
 is_powerblock = False
 
 timer = None
+running = True
 s = None
 
-def on_connect_mqtt(client, userdata, flags, rc):
+
+def on_connect_mqtt(client, __userdata, __flags, __rc):
     client.publish(PREFIX + '/LWT', 'Online', 0, True)
     client.subscribe(PREFIX + '/POWER', 0)
     client.subscribe(PREFIX + '/SPEED', 0)
@@ -79,13 +79,14 @@ def on_connect_mqtt(client, userdata, flags, rc):
     client.message_callback_add(PREFIX + '/MODE', on_mode_message)
     client.message_callback_add(PREFIX + '/SCENE', on_scene_message)
 
-def on_power_message(client, userdata, message):
-    '''
+
+def on_power_message(client, __userdata, message):
+    """
     Код запроса клиента: VWPwr_Pass_X
     Запрос на изменение состояние (включения / отключения) установки
     Описание переменных X = 11 – Включить питание, X = 10 – Отключить питание.
     Код ответа при корректном запросе ОК_VWPwr_X , где X – переданное значение (10 или 11)
-    '''
+    """
     if is_powerblock:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t change power state, power is blocked')
         return
@@ -93,55 +94,60 @@ def on_power_message(client, userdata, message):
         syslog.syslog(syslog.LOG_ERR, 'Value for power (ON/OFF) incorrect: {0}'.format(message.payload.decode('utf-8')))
         return
     mode = 10 if message.payload.decode('utf-8').upper() == "OFF" else 11
-    send_data('{0}_{1:2X}_{2:X}'.format('VWPwr', TCP_PASS, mode), 
-        'OK_VWPwr_{0:X}'.format(mode), 'Can\'t change power state: {0}'.format(mode))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWPwr', TCP_PASS, mode),
+              'OK_VWPwr_{0:X}'.format(mode), 'Can\'t change power state: {0}'.format(mode))
 
-def on_speed_message(client, userdata, message):
-    '''
+
+def on_speed_message(client, __userdata, message):
+    """
     Код запроса клиента: VWSpd_Pass_SpeedTarget
     Запрос для изменения заданной скорости вентилятора.
     Описание переменных:
         SpeedTarget – заданная скорость (от SpeedMin до SpeedMax)
-    '''
+    """
     try:
         level = int(message.payload.decode('utf-8'))
     except ValueError:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for speed: {0}'.format(message.payload.decode('utf-8')))
         return
-    if level not in range(speed_min, speed_max+1):
+    if level not in range(speed_min, speed_max + 1):
         syslog.syslog(syslog.LOG_ERR, 'Value for speed out of range ({0}-{1}): {2}'.format(speed_min, speed_max, level))
         return
     if is_vav and not is_regpressvav:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t set speed, VAV activated and pressure regulation not activated.')
         return
-    send_data('{0}_{1:2X}_{2:X}'.format('VWSpd', TCP_PASS, level), 
-        'OK_VWSpd_{0:X}'.format(level), 'Can\'t set speed level: {0}'.format(level))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWSpd', TCP_PASS, level),
+              'OK_VWSpd_{0:X}'.format(level), 'Can\'t set speed level: {0}'.format(level))
 
-def on_temperature_message(client, userdata, message):
-    '''
+
+def on_temperature_message(client, __userdata, message):
+    """
     Код запроса клиента: VWTmp_Pass_TempTarget
     Запрос для изменения заданной температуры
     Описание переменных:
         TempTarget – заданная температура (от TempMin до TempMax)
-    '''
+    """
     try:
         level = int(message.payload.decode('utf-8'))
     except ValueError:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for temperature: {0}'.format(message.payload.decode('utf-8')))
         return
-    if level not in range(temperature_min, temperature_max+1):
-        syslog.syslog(syslog.LOG_ERR, 'Value for temperature out of range ({0}-{1}): {2}'.format(temperature_min, temperature_max, level))
+    if level not in range(temperature_min, temperature_max + 1):
+        syslog.syslog(syslog.LOG_ERR,
+                      'Value for temperature out of range ({0}-{1}): {2}'.format(temperature_min, temperature_max,
+                                                                                 level))
         return
-    send_data('{0}_{1:2X}_{2:X}'.format('VWTmp', TCP_PASS, level), 
-        'OK_VWTmp_{0:X}'.format(level), 'Can\'t set temperature level: {0}'.format(level))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWTmp', TCP_PASS, level),
+              'OK_VWTmp_{0:X}'.format(level), 'Can\'t set temperature level: {0}'.format(level))
 
-def on_humidity_message(client, userdata, message):
-    '''
+
+def on_humidity_message(client, __userdata, message):
+    """
     Код запроса клиента: VWHum_Pass_HumTarget
     Запрос для заданной влажности. Запрос разрешен только если IsHumid == 1
     Описание переменных:
         HumTarget – заданная влажность (от HumMin до HumMax)
-    '''
+    """
     if not is_humidifier:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t set humidity, humidifier not found')
         return
@@ -150,14 +156,16 @@ def on_humidity_message(client, userdata, message):
     except ValueError:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for humidity: {0}'.format(message.payload.decode('utf-8')))
         return
-    if level not in range(humidity_min, humidity_max+1):
-        syslog.syslog(syslog.LOG_ERR, 'Value for humidity out of range ({0}-{1}): {2}'.format(humidity_min, humidity_max, level))
+    if level not in range(humidity_min, humidity_max + 1):
+        syslog.syslog(syslog.LOG_ERR,
+                      'Value for humidity out of range ({0}-{1}): {2}'.format(humidity_min, humidity_max, level))
         return
-    send_data('{0}_{1:2X}_{2:X}'.format('VWHum', TCP_PASS, level), 
-        'OK_VWHum_{0:X}'.format(level), 'Can\'t set humidity level: {0}'.format(level))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWHum', TCP_PASS, level),
+              'OK_VWHum_{0:X}'.format(level), 'Can\'t set humidity level: {0}'.format(level))
 
-def on_comfort_message(client, userdata, message):
-    '''
+
+def on_comfort_message(client, __userdata, message):
+    """
     Код запроса клиента: VWFtr_Pass_bitFeature
     Запрос на изменение режима работы и вкл. / откл. функций
     Описание переменных:
@@ -166,15 +174,16 @@ def on_comfort_message(client, userdata, message):
                 1 – Включено
                 2 – Отключено
                 0 -  без изменений.
-    '''
+    """
     if message.payload.decode('utf-8').upper() not in ('ON', 'OFF'):
         return
     mode = 1 if message.payload.decode('utf-8').upper() == 'ON' else 2
-    send_data('{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode << 5), 
-        'OK_VWFtr_{0:X}'.format(mode << 5), 'Can\'t change comfort mode: {0}'.format(mode))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode << 5),
+              'OK_VWFtr_{0:X}'.format(mode << 5), 'Can\'t change comfort mode: {0}'.format(mode))
 
-def on_mode_message(client, userdata, message):
-    '''
+
+def on_mode_message(client, __userdata, message):
+    """
     Код запроса клиента: VWFtr_Pass_bitFeature
     Запрос на изменение режима работы и вкл. / откл. функций
     Описание переменных:
@@ -185,7 +194,7 @@ def on_mode_message(client, userdata, message):
                 3 – Авто
                 4 – Отключено (без обогрева и охлаждения)
                 0 – режим остается без изменений.
-    '''
+    """
     try:
         mode = int(message.payload.decode('utf-8'))
     except ValueError:
@@ -200,11 +209,12 @@ def on_mode_message(client, userdata, message):
     if mode not in (1, 2, 3, 4):
         syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode, mode is unknown')
         return
-    send_data('{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode), 
-        'OK_VWFtr_{0:X}'.format(mode), 'Can\'t change vent mode: {0}'.format(mode))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode),
+              'OK_VWFtr_{0:X}'.format(mode), 'Can\'t change vent mode: {0}'.format(mode))
 
-def on_scene_message(client, userdata, message):
-    '''
+
+def on_scene_message(client, __userdata, message):
+    """
     Код запроса клиента: VWScn_Pass_bitNScen
     Запрос для активации сценария. Запрос разрешен, только если ScenBlock == 0
     Описание переменных:
@@ -213,7 +223,7 @@ def on_scene_message(client, userdata, message):
             нужно.
             Bit 7-4 – 10 - отключить выполнение сценариев по таймерам; 11 – включить выполнение сценариев
             по таймерам. При других значениях это поле ни на что не влияет.
-    '''
+    """
     if is_sceneblock:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene, scene is blocked')
         return
@@ -226,13 +236,14 @@ def on_scene_message(client, userdata, message):
         except ValueError:
             syslog.syslog(syslog.LOG_ERR, 'Incorrect value for scene: {0}'.format(message.payload.decode('utf-8')))
             return
-        if mode in (1,2,3,4,5,6,7,8):
+        if mode in (1, 2, 3, 4, 5, 6, 7, 8):
             command = mode
         else:
             syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene, scene number must be in range 1-8')
             return
-    send_data('{0}_{1:2X}_{2:X}'.format('VWScn', TCP_PASS, command), 
-        'OK_VWScn_{0:X}'.format(command), 'Can\'t change scene: {0}'.format(mode))
+    send_data(client, '{0}_{1:2X}_{2:X}'.format('VWScn', TCP_PASS, command),
+              'OK_VWScn_{0:X}'.format(command), 'Can\'t change scene: {0}'.format(mode))
+
 
 def check_vent_params():
     global temperature_min, temperature_max
@@ -284,8 +295,8 @@ def check_vent_params():
             BitVerContr - Firmware_Ver – версия прошивки контроллера
     '''
     try:
-        version = int(data_array[5],16) >> 8
-        subversion = int(data_array[5],16) & 0xFF
+        version = int(data_array[5], 16) >> 8
+        subversion = int(data_array[5], 16) & 0xFF
     except ValueError:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for version/subversion')
         return False
@@ -293,26 +304,27 @@ def check_vent_params():
         syslog.syslog(syslog.LOG_ERR, 'Incompatible protocol version: {0}.{1}'.format(version, subversion))
         return False
     try:
-        temperature_min = int(data_array[1],16) & 0xFF
-        temperature_max = (int(data_array[1],16) & 0xFF00) >> 8
-        speed_min = int(data_array[2],16) & 0xFF
-        speed_max = (int(data_array[2],16) & 0xFF00) >> 8
-        humidity_min = int(data_array[3],16) & 0xFF
-        humidity_max = (int(data_array[3],16) & 0xFF00) >> 8
-        is_vav = True if int(data_array[4],16) & 0x100 else False
-        is_regpressvav = True if int(data_array[4],16) & 0x200 else False
-        is_humidifier = True if int(data_array[4],16) & 0x2000 else False
-        is_cooler = True if int(data_array[4],16) & 0x4000 else False
-        is_auto = True if int(data_array[4],16) & 0x8000 else False
+        temperature_min = int(data_array[1], 16) & 0xFF
+        temperature_max = (int(data_array[1], 16) & 0xFF00) >> 8
+        speed_min = int(data_array[2], 16) & 0xFF
+        speed_max = (int(data_array[2], 16) & 0xFF00) >> 8
+        humidity_min = int(data_array[3], 16) & 0xFF
+        humidity_max = (int(data_array[3], 16) & 0xFF00) >> 8
+        is_vav = True if int(data_array[4], 16) & 0x100 else False
+        is_regpressvav = True if int(data_array[4], 16) & 0x200 else False
+        is_humidifier = True if int(data_array[4], 16) & 0x2000 else False
+        is_cooler = True if int(data_array[4], 16) & 0x4000 else False
+        is_auto = True if int(data_array[4], 16) & 0x8000 else False
     except ValueError:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect value for vent parameters')
         return False
     return True
 
-def get_vent_status():
+
+def get_vent_status(client):
     global timer
     global is_sceneblock, is_powerblock
-    timer = threading.Timer(INTERVAL, get_vent_status)
+    timer = threading.Timer(INTERVAL, get_vent_status, [client])
     timer.start()
     '''
     Запрос: VSt07_Pass
@@ -348,14 +360,14 @@ def get_vent_status():
         Bit 14 – ScenBlock – сценарии заблокированы режимом ДУ.
         Bit 15 – BtnPwrBlock – кнопка питания заблокирована режимом ДУ.
     '''
-    status = {}
-    status['Temperature'] = {}
-    status['Humidity'] = {}
-    status['Speed'] = {}
-    status['DateTime'] = {}
-    status['Scene'] = {}
-    status['Settings'] = {}
-    status['State'] = {}
+    status = dict()
+    status['Temperature'] = dict()
+    status['Humidity'] = dict()
+    status['Speed'] = dict()
+    status['DateTime'] = dict()
+    status['Scene'] = dict()
+    status['Settings'] = dict()
+    status['State'] = dict()
 
     status['State']['Power'] = 'ON' if int(data_array[1], 16) & 0x01 else 'OFF'
     status['State']['Warning'] = 'ON' if int(data_array[1], 16) & 0x02 else 'OFF'
@@ -397,10 +409,10 @@ def get_vent_status():
             4 – сценарий будет запущен позднее (сейчас активного сценария нет)
         Bit 13-15 – NumIcoHF – номер иконки Влажность / фильтр.
     '''
-    unitstate = {0:'Выключено', 1:'Включено', 2:'Выключение', 3:'Включение'}
+    unitstate = {0: 'Выключено', 1: 'Включено', 2: 'Выключение', 3: 'Включение'}
     status['State']['Unit'] = unitstate[(int(data_array[2], 16) & 0x03)]
     status['Scene']['SceneState'] = 'ON' if int(data_array[2], 16) & 0x04 else 'OFF'
-    unitmode = {0:'Обогрев', 1:'Охлаждение', 2:'Авто-Обогрев', 3:'Авто-Охлаждение', 4:'Вентиляция', 5:'Выключено'}
+    unitmode = {0: 'Обогрев', 1: 'Охлаждение', 2: 'Авто-Обогрев', 3: 'Авто-Охлаждение', 4: 'Вентиляция', 5: 'Выключено'}
     status['State']['Mode'] = unitmode[(int(data_array[2], 16) & 0x38) >> 3]
     status['Scene']['Number'] = (int(data_array[2], 16) & 0x3C0) >> 6
     '''
@@ -450,7 +462,8 @@ def get_vent_status():
         Bit 7-0 – nn – минуты (от 00 до 59)
         Bit 15-8 – hh – часы (от 00 до 23)
     '''
-    status['DateTime']['Time'] = '{0:02d}:{1:02d}'.format((int(data_array[7], 16) & 0xFF00) >> 8, int(data_array[7], 16) & 0xFF)
+    status['DateTime']['Time'] = '{0:02d}:{1:02d}'.format((int(data_array[7], 16) & 0xFF00) >> 8,
+                                                          int(data_array[7], 16) & 0xFF)
     '''
     bitDate:
         Bit 7-0 – dd – день месяца (от 1 до 31)
@@ -459,50 +472,56 @@ def get_vent_status():
         Bit 7-0 – dow – день недели (от 1-Пн до 7-Вс)
         Bit 15-8 – yy – год (от 0 до 99, последние две цифры года).
     '''
-    status['DateTime']['Date'] = '{0:02d}-{1:02d}-20{2:02d}'.format(int(data_array[8], 16) & 0xFF, (int(data_array[8], 16) & 0xFF00) >> 8, (int(data_array[9], 16) & 0xFF00) >> 8)
+    status['DateTime']['Date'] = '{0:02d}-{1:02d}-20{2:02d}'.format(int(data_array[8], 16) & 0xFF,
+                                                                    (int(data_array[8], 16) & 0xFF00) >> 8,
+                                                                    (int(data_array[9], 16) & 0xFF00) >> 8)
     '''
     Msg - текстовое сообщение о состоянии установки длиной от 5 до 70 символов.
     '''
     status['Msg'] = data_array[10]
     client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
 
-def send_data(request, answer, error_message):
+
+def send_data(client, request, answer, error_message):
     try:
         s.settimeout(5.0)
         s.send(request)
-        data = str( s.recv(BUFFER_SIZE) )
+        data = str(s.recv(BUFFER_SIZE))
         if data != answer:
             syslog.syslog(syslog.LOG_ERR, error_message)
         else:
-            if timer: timer.cancel()
+            if timer:
+                timer.cancel()
             time.sleep(0.5)
-            get_vent_status()
+            get_vent_status(client)
     except socket.error as error:
         syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
         vent_connect()
+
 
 def send_request(request):
     data = None
     try:
         s.settimeout(5.0)
         s.send(request)
-        data = str( s.recv(BUFFER_SIZE) )
+        data = str(s.recv(BUFFER_SIZE))
     except socket.error as error:
         syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
         vent_connect()
     return data
 
+
 def vent_connect():
     global s
+    global running
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5.0)
         s.connect((TCP_IP, TCP_PORT))
     except socket.error as error:
         syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
-        if s: s.close()
-        if timer: timer.cancel()
-        sys.exit(-1)
+        running = False
+
 
 def split_data(data, array_len=0):
     data_array = data.split('_')
@@ -510,33 +529,38 @@ def split_data(data, array_len=0):
         return None
     return data_array
 
+
 # if __name__ == '__main__':
 with daemon.DaemonContext():
     syslog.syslog(syslog.LOG_INFO, 'Translator started')
+
+    # noinspection PyBroadException
     try:
         vent_connect()
         if not check_vent_params():
-            raise
+            raise Exception
 
-        client = mqtt.Client(CLIENT_ID, True if CLIENT_ID else False)
-        client.will_set(PREFIX + '/LWT', 'Offline', 0, True)
-        client.on_connect = on_connect_mqtt
-        client.username_pw_set(USERNAME, PASSWORD)
-        client.connect(BROKER, 1883, 60)
+        mqtt_client = mqtt.Client(CLIENT_ID, True if CLIENT_ID else False)
+        mqtt_client.will_set(PREFIX + '/LWT', 'Offline', 0, True)
+        mqtt_client.on_connect = on_connect_mqtt
+        mqtt_client.username_pw_set(USERNAME, PASSWORD)
+        mqtt_client.connect(BROKER, 1883, 60)
 
-        client.loop_start()
-        get_vent_status()
+        mqtt_client.loop_start()
+        get_vent_status(mqtt_client)
 
         # infinite loop ...
-        while True:
+        while running:
             time.sleep(0.1)
 
     except KeyboardInterrupt:
         sys.exit(0)
-    except:
+    except Exception:
         syslog.syslog(syslog.LOG_ERR, 'Translator have error')
         sys.exit(-1)
     finally:
-        if s: s.close()
-        if timer: timer.cancel()
+        if s:
+            s.close()
+        if timer:
+            timer.cancel()
         syslog.syslog(syslog.LOG_INFO, 'Translator terminated')
