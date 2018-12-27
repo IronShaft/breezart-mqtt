@@ -622,7 +622,7 @@ def split_data(data, array_len=0):
 
 # if __name__ == '__main__':
 with daemon.DaemonContext():
-    syslog.syslog(syslog.LOG_INFO, 'Translator started')
+    syslog.syslog(syslog.LOG_INFO, 'Bridge started')
 
     # noinspection PyBroadException
     try:
@@ -646,11 +646,11 @@ with daemon.DaemonContext():
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception:
-        syslog.syslog(syslog.LOG_ERR, 'Translator have error')
+        syslog.syslog(syslog.LOG_ERR, 'Bridge have error')
         sys.exit(-1)
     finally:
         if s:
             s.close()
         if timer:
             timer.cancel()
-        syslog.syslog(syslog.LOG_INFO, 'Translator terminated')
+        syslog.syslog(syslog.LOG_INFO, 'Bridge terminated')
