@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 # Warning! VAV not supported!
 
@@ -17,7 +17,9 @@ Roadmap:
 
 import sys
 import daemon
+import errno
 import json
+import os
 import socket
 import syslog
 import time
@@ -90,19 +92,9 @@ def on_power_message(client, userdata, message):
     if message.payload.decode('utf-8').upper() not in ('ON', 'OFF'):
         syslog.syslog(syslog.LOG_ERR, 'Value for power (ON/OFF) incorrect: {0}'.format(message.payload.decode('utf-8')))
         return
-    global s
-    global timer
     mode = 10 if message.payload.decode('utf-8').upper() == "OFF" else 11
-    request = '{0}_{1:2X}_{2:X}'.format('VWPwr', TCP_PASS, mode)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWPwr_{0:X}'.format(mode):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t change power state: {0}'.format(mode))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWPwr', TCP_PASS, mode), 
+        'OK_VWPwr_{0:X}'.format(mode), 'Can\'t change power state: {0}'.format(mode))
 
 def on_speed_message(client, userdata, message):
     '''
@@ -122,18 +114,8 @@ def on_speed_message(client, userdata, message):
     if is_vav and not is_regpressvav:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t set speed, VAV activated and pressure regulation not activated.')
         return
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWSpd', TCP_PASS, level)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWSpd_{0:X}'.format(level):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t set speed level: {0}'.format(level))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWSpd', TCP_PASS, level), 
+        'OK_VWSpd_{0:X}'.format(level), 'Can\'t set speed level: {0}'.format(level))
 
 def on_temperature_message(client, userdata, message):
     '''
@@ -150,18 +132,8 @@ def on_temperature_message(client, userdata, message):
     if level not in range(temperature_min, temperature_max+1):
         syslog.syslog(syslog.LOG_ERR, 'Value for temperature out of range ({0}-{1}): {2}'.format(temperature_min, temperature_max, level))
         return
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWTmp', TCP_PASS, level)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWTmp_{0:X}'.format(level):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t set temperature level: {0}'.format(level))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWTmp', TCP_PASS, level), 
+        'OK_VWTmp_{0:X}'.format(level), 'Can\'t set temperature level: {0}'.format(level))
 
 def on_humidity_message(client, userdata, message):
     '''
@@ -181,18 +153,8 @@ def on_humidity_message(client, userdata, message):
     if level not in range(humidity_min, humidity_max+1):
         syslog.syslog(syslog.LOG_ERR, 'Value for humidity out of range ({0}-{1}): {2}'.format(humidity_min, humidity_max, level))
         return
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWHum', TCP_PASS, level)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWHum_{0:X}'.format(level):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t set humidity level: {0}'.format(level))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWHum', TCP_PASS, level), 
+        'OK_VWHum_{0:X}'.format(level), 'Can\'t set humidity level: {0}'.format(level))
 
 def on_comfort_message(client, userdata, message):
     '''
@@ -208,18 +170,8 @@ def on_comfort_message(client, userdata, message):
     if message.payload.decode('utf-8').upper() not in ('ON', 'OFF'):
         return
     mode = 1 if message.payload.decode('utf-8').upper() == 'ON' else 2
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode << 5)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWFtr_{0:X}'.format(mode << 5):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t change comfort mode: {0}'.format(mode))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode << 5), 
+        'OK_VWFtr_{0:X}'.format(mode << 5), 'Can\'t change comfort mode: {0}'.format(mode))
 
 def on_mode_message(client, userdata, message):
     '''
@@ -248,18 +200,8 @@ def on_mode_message(client, userdata, message):
     if mode not in (1, 2, 3, 4):
         syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode, mode is unknown')
         return
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWFtr_{0:X}'.format(mode):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t change vent mode: {0}'.format(mode))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
+    send_data('{0}_{1:2X}_{2:X}'.format('VWFtr', TCP_PASS, mode), 
+        'OK_VWFtr_{0:X}'.format(mode), 'Can\'t change vent mode: {0}'.format(mode))
 
 def on_scene_message(client, userdata, message):
     '''
@@ -289,40 +231,29 @@ def on_scene_message(client, userdata, message):
         else:
             syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene, scene number must be in range 1-8')
             return
-    global s
-    global timer
-    request = '{0}_{1:2X}_{2:X}'.format('VWScn', TCP_PASS, command)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    if data != 'OK_VWScn_{0:X}'.format(command):
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t change scene: {0}'.format(mode))
-    else:
-        if timer: timer.cancel()
-        time.sleep(0.5)
-        get_vent_status()
-
-def split_data(data, array_len=0):
-    data_array = data.split('_')
-    if len(data_array) != array_len:
-        return None
-    return data_array
+    send_data('{0}_{1:2X}_{2:X}'.format('VWScn', TCP_PASS, command), 
+        'OK_VWScn_{0:X}'.format(command), 'Can\'t change scene: {0}'.format(mode))
 
 def check_vent_params():
-    global s
     global temperature_min, temperature_max
     global speed_min, speed_max
     global humidity_min, humidity_max
     global is_humidifier, is_cooler, is_auto
     global is_vav, is_regpressvav
 
-    # VPr07_Pass
-    request = '{0}_{1:2X}'.format('VPr07', TCP_PASS)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
     '''
-    VPr07_bitTempr_bitSpeed_bitHumid_bitMisc_BitPrt_BitVerTPD_BitVerContr
+    Запрос: VPr07_Pass
+    Ответ: VPr07_bitTempr_bitSpeed_bitHumid_bitMisc_BitPrt_BitVerTPD_BitVerContr
+    '''
+    data = send_request('{0}_{1:2X}'.format('VPr07', TCP_PASS))
+    if not data:
+        syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
+        return
+    data_array = split_data(data, 8)
+    if not data_array:
+        syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
+        return False
+    '''
     Описание переменных:
         bitTemper:
             Bit 7-0 – TempMin – минимально допустимая заданная температура (от 5 до 15)
@@ -352,10 +283,6 @@ def check_vent_params():
             Bit 15-8 – HiVerTPD – старший байт версии прошивки пульта
             BitVerContr - Firmware_Ver – версия прошивки контроллера
     '''
-    data_array = split_data(data, 8)
-    if not data_array:
-        syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
-        return False
     try:
         version = int(data_array[5],16) >> 8
         subversion = int(data_array[5],16) & 0xFF
@@ -384,17 +311,17 @@ def check_vent_params():
 
 def get_vent_status():
     global timer
-    global s
     global is_sceneblock, is_powerblock
     timer = threading.Timer(INTERVAL, get_vent_status)
     timer.start()
-
-    # VSt07_Pass
-    request = '{0}_{1:2X}'.format('VSt07', TCP_PASS)
-    s.settimeout(5.0)
-    s.send(request)
-    data = str( s.recv(BUFFER_SIZE) )
-    # VSt07_bitState_bitMode_bitTempr_bitHumid_bitSpeed_bitMisc_bitTime_bitDate_bitYear_Msg
+    '''
+    Запрос: VSt07_Pass
+    Ответ: VSt07_bitState_bitMode_bitTempr_bitHumid_bitSpeed_bitMisc_bitTime_bitDate_bitYear_Msg
+    '''
+    data = send_request('{0}_{1:2X}'.format('VSt07', TCP_PASS))
+    if not data:
+        syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
+        return
     data_array = split_data(data, 11)
     if not data_array:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
@@ -539,13 +466,57 @@ def get_vent_status():
     status['Msg'] = data_array[10]
     client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
 
+def send_data(request, answer, error_message):
+    try:
+        s.settimeout(5.0)
+        s.send(request)
+        data = str( s.recv(BUFFER_SIZE) )
+        if data != answer:
+            syslog.syslog(syslog.LOG_ERR, error_message)
+        else:
+            if timer: timer.cancel()
+            time.sleep(0.5)
+            get_vent_status()
+    except socket.error as error:
+        syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
+        vent_connect()
+
+def send_request(request):
+    data = None
+    try:
+        s.settimeout(5.0)
+        s.send(request)
+        data = str( s.recv(BUFFER_SIZE) )
+    except socket.error as error:
+        syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
+        vent_connect()
+    return data
+
+def vent_connect():
+    global s
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.connect((TCP_IP, TCP_PORT))
+    except socket.error as error:
+        syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
+        if s: s.close()
+        if timer: timer.cancel()
+        sys.exit(-1)
+
+def split_data(data, array_len=0):
+    data_array = data.split('_')
+    if len(data_array) != array_len:
+        return None
+    return data_array
+
 # if __name__ == '__main__':
 with daemon.DaemonContext():
     syslog.syslog(syslog.LOG_INFO, 'Translator started')
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((TCP_IP, TCP_PORT))
-        if not check_vent_params(): sys.exit(-1)
+        vent_connect()
+        if not check_vent_params():
+            raise
 
         client = mqtt.Client(CLIENT_ID, True if CLIENT_ID else False)
         client.will_set(PREFIX + '/LWT', 'Offline', 0, True)
@@ -563,7 +534,7 @@ with daemon.DaemonContext():
     except KeyboardInterrupt:
         sys.exit(0)
     except:
-        syslog.syslog(syslog.LOG_ERR, 'Translator terminated with error')
+        syslog.syslog(syslog.LOG_ERR, 'Translator have error')
         sys.exit(-1)
     finally:
         if s: s.close()
