@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 # Warning! VAV not supported!
 
@@ -59,6 +59,8 @@ numvavzone = 20
 is_showhumidity = False
 is_casctempreg = False
 is_caschumreg = False
+tpd_version = ''
+contr_version = ''
 
 timer = None
 running = True
@@ -317,6 +319,7 @@ def check_vent_params():
     global is_vav, is_regpressvav
     global numvavzone
     global is_showhumidity, is_casctempreg, is_caschumreg
+    global tpd_version, contr_version
 
     '''
     Запрос: VPr07_Pass
@@ -358,7 +361,7 @@ def check_vent_params():
         BitVerTPD:
             Bit 7-0 – LoVerTPD – младший байт версии прошивки пульта
             Bit 15-8 – HiVerTPD – старший байт версии прошивки пульта
-            BitVerContr - Firmware_Ver – версия прошивки контроллера
+        BitVerContr - Firmware_Ver – версия прошивки контроллера
     '''
     try:
         version = int(data_array[5], 16) >> 8
@@ -369,6 +372,13 @@ def check_vent_params():
     if version != 107:
         syslog.syslog(syslog.LOG_ERR, 'Incompatible protocol version: {0}.{1}'.format(version, subversion))
         return False
+    syslog.syslog(syslog.LOG_INFO, 'Protocol version: {0}.{1}'.format(version, subversion))
+    tpd_version = '{0}.{1}'.format(int(data_array[6], 16) >> 8, int(data_array[6], 16) & 0xFF)
+    syslog.syslog(syslog.LOG_INFO, 'TPD version: {0}'.format(tpd_version))
+    contr_version = '{0}.{1}.{2}'.format((int(data_array[7], 16) & 0xE000) >> 13,
+                                                             (int(data_array[7], 16) & 0x1FE0) >> 5,
+                                                             int(data_array[7], 16) & 0x1F)
+    syslog.syslog(syslog.LOG_INFO, 'Controller version: {0}'.format(contr_version))
     try:
         temperature_min = int(data_array[1], 16) & 0xFF
         temperature_max = (int(data_array[1], 16) & 0xFF00) >> 8
@@ -574,6 +584,8 @@ def get_vent_status(client):
     status['Settings']['isShowHumidity'] = is_showhumidity
     status['Settings']['isCascTempReg'] = is_casctempreg
     status['Settings']['isCascHumReg'] = is_caschumreg
+    status['TPDVer'] = tpd_version
+    status['ContVer'] = contr_version
     '''
     Запрос: VSens_Pass
     Ответ: VSens_Sens01_Sens02_Sens03_Sens04_Sens05_Sens06_Sens07_Sens08_Sens09_Sens10_Sens11_Sens12
