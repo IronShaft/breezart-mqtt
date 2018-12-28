@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 # Warning! VAV not supported!
 
@@ -55,6 +55,10 @@ is_vav = False
 is_regpressvav = False
 is_sceneblock = False
 is_powerblock = False
+numvavzone = 20
+is_showhumidity = False
+is_casctempreg = False
+is_caschumreg = False
 
 timer = None
 running = True
@@ -311,6 +315,8 @@ def check_vent_params():
     global humidity_min, humidity_max
     global is_humidifier, is_cooler, is_auto
     global is_vav, is_regpressvav
+    global numvavzone
+    global is_showhumidity, is_casctempreg, is_caschumreg
 
     '''
     Запрос: VPr07_Pass
@@ -370,8 +376,12 @@ def check_vent_params():
         speed_max = (int(data_array[2], 16) & 0xFF00) >> 8
         humidity_min = int(data_array[3], 16) & 0xFF
         humidity_max = (int(data_array[3], 16) & 0xFF00) >> 8
+        numvavzone = int(data_array[4], 16) & 0x1F
         is_vav = True if int(data_array[4], 16) & 0x100 else False
         is_regpressvav = True if int(data_array[4], 16) & 0x200 else False
+        is_showhumidity = True if int(data_array[4], 16) & 0x400 else False
+        is_casctempreg = True if int(data_array[4], 16) & 0x800 else False
+        is_caschumreg = True if int(data_array[4], 16) & 0x1000 else False
         is_humidifier = True if int(data_array[4], 16) & 0x2000 else False
         is_cooler = True if int(data_array[4], 16) & 0x4000 else False
         is_auto = True if int(data_array[4], 16) & 0x8000 else False
@@ -478,6 +488,8 @@ def get_vent_status(client):
     unitmode = {0: 'Обогрев', 1: 'Охлаждение', 2: 'Авто-Обогрев', 3: 'Авто-Охлаждение', 4: 'Вентиляция', 5: 'Выключено'}
     status['State']['Mode'] = unitmode[(int(data_array[2], 16) & 0x38) >> 3]
     status['Scene']['Number'] = (int(data_array[2], 16) & 0x3C0) >> 6
+    status['Scene']['WhoActivate'] = (int(data_array[2], 16) & 0x1C00) >> 10
+    status['State']['IconHF'] = (int(data_array[2], 16) & 0xE000) >> 13
     '''
     bitTempr:
         Bit 7-0 – Tempr signed char – текущая температура, °С. Диапазон значений от -50 до 70.
@@ -542,6 +554,26 @@ def get_vent_status(client):
     Msg - текстовое сообщение о состоянии установки длиной от 5 до 70 символов.
     '''
     status['Msg'] = data_array[10]
+    '''
+    Vent settings
+    '''
+    status['Settings']['MinTemperature'] = temperature_min
+    status['Settings']['MaxTemperature'] = temperature_max
+    status['Settings']['MinSpeed'] = speed_min
+    status['Settings']['MaxSpeed'] = speed_max
+    status['Settings']['MinHumidity'] = humidity_min
+    status['Settings']['MaxHumidity'] = humidity_max
+    status['Settings']['isHumidifier'] = is_humidifier
+    status['Settings']['isCooler'] = is_cooler
+    status['Settings']['isAuto'] = is_auto
+    status['Settings']['isVAV'] = is_vav
+    status['Settings']['isRegPressVAV'] = is_regpressvav
+    status['Settings']['isSceneBlock'] = is_sceneblock
+    status['Settings']['isPowerBlock'] = is_powerblock
+    status['Settings']['NumZoneVAV'] = numvavzone
+    status['Settings']['isShowHumidity'] = is_showhumidity
+    status['Settings']['isCascTempReg'] = is_casctempreg
+    status['Settings']['isCascHumReg'] = is_caschumreg
     '''
     Запрос: VSens_Pass
     Ответ: VSens_Sens01_Sens02_Sens03_Sens04_Sens05_Sens06_Sens07_Sens08_Sens09_Sens10_Sens11_Sens12
