@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 __author__ = "IronShaft"
 __license__ = "GPL"
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 # Warning! VAV not supported!
 
@@ -19,7 +19,6 @@ import json
 import socket
 import syslog
 import time
-import threading
 import paho.mqtt.client as mqtt
 from datetime import datetime
 
@@ -29,8 +28,6 @@ TCP_PORT = 1560
 # password for vent
 TCP_PASS = 12345
 BUFFER_SIZE = 128
-# interval auto requests unit state, sec
-INTERVAL = 60
 
 # define the MQTT connection for communication with openHAB
 BROKER = '127.0.0.1'
@@ -62,9 +59,10 @@ is_caschumreg = False
 tpd_version = ''
 contr_version = ''
 
-timer = None
 running = True
 s = None
+old_status = None
+fail_data = 0
 
 
 def on_connect_mqtt(client, __userdata, __flags, __rc):
@@ -376,8 +374,7 @@ def check_vent_params():
     tpd_version = '{0}.{1}'.format(int(data_array[6], 16) >> 8, int(data_array[6], 16) & 0xFF)
     syslog.syslog(syslog.LOG_INFO, 'TPD version: {0}'.format(tpd_version))
     contr_version = '{0}.{1}.{2}'.format((int(data_array[7], 16) & 0xE000) >> 13,
-                                                             (int(data_array[7], 16) & 0x1FE0) >> 5,
-                                                             int(data_array[7], 16) & 0x1F)
+                                         (int(data_array[7], 16) & 0x1FE0) >> 5, int(data_array[7], 16) & 0x1F)
     syslog.syslog(syslog.LOG_INFO, 'Controller version: {0}'.format(contr_version))
     try:
         temperature_min = int(data_array[1], 16) & 0xFF
@@ -402,10 +399,8 @@ def check_vent_params():
 
 
 def get_vent_status(client):
-    global timer
     global is_sceneblock, is_powerblock
-    timer = threading.Timer(INTERVAL, get_vent_status, [client])
-    timer.start()
+    global old_status, fail_data
     '''
     Запрос: VSt07_Pass
     Ответ: VSt07_bitState_bitMode_bitTempr_bitHumid_bitSpeed_bitMisc_bitTime_bitDate_bitYear_Msg
@@ -422,10 +417,14 @@ def get_vent_status(client):
 
     data = send_request('{0}_{1:X}'.format('VSt07', TCP_PASS))
     if not data:
-        syslog.syslog(syslog.LOG_ERR, 'Can\'t connect to vent')
-        status['State']['Unit'] = 'Нет связи с вентиляцией'
-        client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
+        syslog.syslog(syslog.LOG_ERR, 'Can\'t get data from vent')
+        fail_data += 1
+        if fail_data > 3:
+            fail_data = 0
+            status['State']['Unit'] = 'Нет связи с вентиляцией'
+            client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
         return
+    fail_data = 0
     data_array = split_data(data, 11)
     if not data_array:
         syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
@@ -593,23 +592,24 @@ def get_vent_status(client):
             Диапазон значений от -50,0 до 70,0.
         При отсутствии корректных данных значение равно 0xFB07
         Назначение остальных параметров см.документацию. 
-            
     '''
-    time.sleep(0.5)
+    time.sleep(1)
     data = send_request('{0}_{1:X}'.format('VSens', TCP_PASS))
     if data:
         data_array = split_data(data, 13)
         if data_array:
             status['Sensors']['Sens_01'] = (-(int(data_array[1], 16) & 0x8000) | (
-                    int(data_array[1], 16) & 0x7fff)) / 10.0
-            status['Sensors']['Sens_05'] = int(data_array[5], 16) / 10.0
+                    int(data_array[1], 16) & 0x7fff)) / 10
+            status['Sensors']['Sens_05'] = int(data_array[5], 16) / 10
         else:
             syslog.syslog(syslog.LOG_ERR, 'Incorrect answer: {0}'.format(data))
     else:
         syslog.syslog(syslog.LOG_ERR, 'Can\'t connect to vent')
         status['State']['Unit'] = 'Нет связи с вентиляцией'
 
-    client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
+    if old_status != status:
+        old_status = status
+        client.publish(PREFIX + '/STATUS', json.dumps(status, ensure_ascii=False))
 
 
 def send_data(client, request, answer, error_message):
@@ -619,11 +619,6 @@ def send_data(client, request, answer, error_message):
         data = str(s.recv(BUFFER_SIZE))
         if data != answer:
             syslog.syslog(syslog.LOG_ERR, '{0}: {1}'.format(error_message, data))
-        else:
-            if timer:
-                timer.cancel()
-            time.sleep(0.5)
-            get_vent_status(client)
     except socket.error as error:
         syslog.syslog(syslog.LOG_ERR, 'Network error: {0}'.format(error))
         if vent_connect():
@@ -685,7 +680,8 @@ with daemon.DaemonContext():
 
         # infinite loop ...
         while running:
-            time.sleep(0.1)
+            time.sleep(1)
+            get_vent_status(mqtt_client)
 
     except KeyboardInterrupt:
         sys.exit(0)
@@ -695,6 +691,4 @@ with daemon.DaemonContext():
     finally:
         if s:
             s.close()
-        if timer:
-            timer.cancel()
         syslog.syslog(syslog.LOG_INFO, 'Bridge terminated')
